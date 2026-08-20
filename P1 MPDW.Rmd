@@ -1,0 +1,11 @@
+---
+title: "P1 MPDW"
+author: "Naurah Aathirah Farid_M0401241037"
+date: "2026-08-20"
+output: html_document
+---
+
+```{r}
+x=3+2
+x
+```
