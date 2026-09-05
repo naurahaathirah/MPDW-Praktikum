@@ -1,0 +1,145 @@
+---
+title: "Pertemuan 3 - Regresi dengan Peubah Lag Soal 2"
+author: "Naurah Aathirah Farid_M0401241037"
+date: "2026-09-05"
+output: html_document
+---
+
+```{r, echo=FALSE}
+library(dLagM)
+library(dynlm)
+library(MLmetrics)
+library(lmtest)
+library(car)
+```
+
+# Input Data
+```{r}
+year <- 1975:2014
+sales <- c (11.7, 12.0, 12.3, 12.8, 13.1, 13.6, 13.9, 14.4, 14.7, 15.3, 
+            15.5, 15.8, 16.1, 16.6, 16.9, 16.7, 16.9, 17.4, 17.6, 17.9,
+            18.0, 17.9, 18.0, 18.2, 18.2, 18.3, 18.6, 19.2, 19.3, 19.5,
+            19.2, 19.3, 19.5, 20.0, 20.0, 19.9, 19.8, 19.9, 20.2, 21.0)
+advertising <- c(9.4, 9.6, 10.0, 10.4, 10.8, 10.9, 11.7, 12.2, 12.5, 12.9,
+                  13.0, 13.2, 13.8, 14.2, 14.6, 14.4, 15.0, 15.4, 15.7, 15.9,
+                  15.9, 16.0, 16.3, 16.2, 16.8, 17.3, 17.6, 18.1, 18.3, 18.5,
+                  18.7, 18.9, 19.2, 20.0, 20.0, 20.3, 20.4, 21.0, 21.5, 22.1)
+
+dtsales <- data.frame(
+  year = year,
+  sales = sales,
+  adv = advertising
+)
+```
+
+# Pembagian Data
+```{r}
+train <- dtsales[1:32, ]
+test  <- dtsales[33:40, ]
+```
+
+# Pencarian Lag Optimum ARDL
+```{r}
+opt_ardl <- ardlBoundOrders(
+  data = train,
+  formula = sales ~ adv,
+  ic = "AIC",
+  max.p = 5,
+  max.q = 5
+)
+```
+
+```{r}
+opt_ardl
+```
+```{r}
+min_stat <- opt_ardl$min.Stat
+mat_aic <- opt_ardl$Stat.table
+```
+
+```{r}
+pos_opt <- which(mat_aic == min_stat, arr.ind = TRUE)
+best_p <- pos_opt[1, 1]  # Lag untuk adv (X)
+best_q <- pos_opt[1, 2]  # Lag untuk sales (Y)
+
+cat("Model ARDL Optimum terpilih: ARDL(", best_p, ",", best_q, ") dengan AIC =", min_stat, "\n")
+```
+
+# Pendugaan Parameter Model Terbaik
+```{r}
+model_ardl_opt <- ardlDlm(formula = sales ~ adv, data = train, p = best_p, q = best_q)
+summary(model_ardl_opt)
+```
+# Diagnostik Asumsi Sisaan Model Terbaik
+
+```{r}
+dwtest(model_ardl_opt$model)
+bptest(model_ardl_opt$model)
+shapiro.test(residuals(model_ardl_opt$model))
+```
+# Forecast ARDL
+```{r}
+fore_ardl <- forecast(
+  model = model_ardl_opt, 
+  x = dtsales$adv, 
+  h = nrow(test)
+)
+
+fore_ardl
+```
+```{r}
+mape_test <- MAPE(fore_ardl$forecasts, test$sales)
+mape_test
+```
+# Evaluasi Akurasi (Gof & MAPE)
+```{r}
+mape_test <- MAPE(fore_ardl$forecasts, test$sales)
+cat("MAPE Testing:", round(mape_test * 100, 4), "%\n")
+
+# Akurasi data training
+gof_train <- GoF(model_ardl_opt)
+cat("MAPE Training:", round(gof_train[1, "MAPE"] * 100, 4), "%\n")
+
+# Matriks Ringkasan Akurasi
+akurasi_ardl <- data.frame(
+  Model = paste0("ARDL(", best_p, ",", best_q, ")"),
+  MAPE_Training = gof_train[1, "MAPE"],
+  MAPE_Testing = mape_test
+)
+akurasi_ardl
+```
+# Plot Perbandingan Aktual vs Forecast
+```{r}
+# Tentukan rentang sumbu Y agar legenda tidak menimpa garis
+y_range <- range(c(test$sales, fore_ardl$forecasts))
+
+plot(test$year, test$sales, type = "b", pch = 19, col = "black", lwd = 2,
+     ylim = c(floor(y_range[1]), ceiling(y_range[2]) + 0.5),
+     xlab = "Tahun", ylab = "Sales",
+     main = paste0("Perbandingan Sales Aktual vs Forecast ARDL (", best_p, ",", best_q, ")"))
+
+lines(test$year, fore_ardl$forecasts, type = "b", pch = 17, col = "red", lwd = 2, lty = 2)
+
+legend("topleft", 
+       legend = c("Aktual", "Forecast ARDL"),
+       col = c("black", "red"), 
+       pch = c(19, 17), 
+       lty = c(1, 2), 
+       lwd = 2, 
+       bty = "o", 
+       bg = "white")
+```
+# Pembahasan dan Kesimpulan
+
+*Model Optimum Terpilih*: Berdasarkan kriteria nilai AIC terendah dari fungsi ardlBoundOrders(), ordo lag terbaik adalah ARDL berordo (best_p, best_q).
+
+*Diagnostik Sisaan*:
+
+1. Uji Durbin-Watson: $p\text{-value} > 0.05$, menandakan residual bebas dari masalah autokorelasi.
+
+2. Uji Breusch-Pagan: $p\text{-value} > 0.05$, menandakan ragam residual homogen (tidak ada heteroskedastisitas).
+
+3. Uji Shapiro-Wilk: $p\text{-value} > 0.05$, menandakan residual berdistribusi normal.
+
+*Akurasi Forecast*: Nilai MAPE pada data testing maupun training berada di bawah 10% dengan selisih yang tidak jauh berbeda. Hal ini membuktikan bahwa model ARDL terpilih memiliki akurasi peramalan yang sangat tinggi serta bebas dari masalah overfitting.
+
