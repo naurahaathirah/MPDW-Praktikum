@@ -1,0 +1,199 @@
+---
+title: "P3 MPDW - Regresi dengan Peubah Lag Soal 2"
+author: "Naurah Aathirah Farid_M0401241037"
+date: "2026-09-05"
+output: 
+  html_document:
+    theme: yeti
+    toc: true
+    toc_float: true
+---
+
+```{r, echo=FALSE}
+library(dLagM)
+library(dynlm)
+library(forecast)
+library(lmtest)
+library(ggplot2)
+```
+
+# Input Data
+
+```{r}
+year <- 1975:2014
+sales <- c (11.7, 12.0, 12.3, 12.8, 13.1, 13.6, 13.9, 14.4, 14.7, 15.3, 
+            15.5, 15.8, 16.1, 16.6, 16.9, 16.7, 16.9, 17.4, 17.6, 17.9,
+            18.0, 17.9, 18.0, 18.2, 18.2, 18.3, 18.6, 19.2, 19.3, 19.5,
+            19.2, 19.3, 19.5, 20.0, 20.0, 19.9, 19.8, 19.9, 20.2, 21.0)
+advertising <- c(9.4, 9.6, 10.0, 10.4, 10.8, 10.9, 11.7, 12.2, 12.5, 12.9,
+                  13.0, 13.2, 13.8, 14.2, 14.6, 14.4, 15.0, 15.4, 15.7, 15.9,
+                  15.9, 16.0, 16.3, 16.2, 16.8, 17.3, 17.6, 18.1, 18.3, 18.5,
+                  18.7, 18.9, 19.2, 20.0, 20.0, 20.3, 20.4, 21.0, 21.5, 22.1)
+
+dtsales <- data.frame(
+  year = year,
+  sales = sales,
+  adv = advertising
+)
+head(dtsales)
+```
+# Visualisasi Deret Waktu
+
+```{r}
+par(mfrow = c(1, 2))
+plot(dtsales$year, dtsales$sales, type = "b", pch = 19, col = "#2980B9", lwd = 2,
+     xlab = "Tahun", ylab = "Sales", main = "Tren Penjualan (Yt)")
+grid()
+
+plot(dtsales$year, dtsales$adv, type = "b", pch = 19, col = "#D35400", lwd = 2,
+     xlab = "Tahun", ylab = "Advertising", main = "Tren Biaya Iklan (Xt)")
+grid()
+par(mfrow = c(1, 1))
+```
+
+# Pembagian Data
+
+```{r}
+train <- dtsales[1:32, ]
+test  <- dtsales[33:40, ]
+
+calc_mape <- function(actual, pred) { mean(abs((actual - pred) / actual)) * 100 }
+calc_mad  <- function(actual, pred) { mean(abs(actual - pred)) }
+calc_msd  <- function(actual, pred) { mean((actual - pred)^2) }
+```
+
+# Pencarian Lag Optimum ARDL
+
+```{r}
+opt_ardl <- ardlBoundOrders(
+  data = train,
+  formula = sales ~ adv,
+  ic = "AIC",
+  max.p = 5,
+  max.q = 5
+)
+```
+
+```{r}
+opt_ardl
+```
+```{r}
+min_stat <- opt_ardl$min.Stat
+mat_aic <- opt_ardl$Stat.table
+
+pos_opt <- which(mat_aic == min_stat, arr.ind = TRUE)
+best_p <- pos_opt[1, 1]  # Lag untuk adv (X)
+best_q <- pos_opt[1, 2]  # Lag untuk sales (Y)
+
+cat("Model ARDL Optimum terpilih: ARDL(", best_p, ",", best_q, ") dengan AIC =", min_stat, "\n")
+```
+
+# Pendugaan Parameter Model Terbaik
+
+```{r}
+model_ardl_opt <- ardlDlm(formula = sales ~ adv, data = train, p = best_p, q = best_q)
+summary(model_ardl_opt)
+```
+# Peramalan & Evaluasi Akurasi
+
+```{r}
+fore_ardl <- dLagM::forecast(
+  model = model_ardl_opt, 
+  x     = test$adv, 
+  h     = nrow(test)
+)
+
+fore_ardl$forecasts
+
+# Evaluasi akurasi data uji (testing)
+mape_test <- calc_mape(test$sales, fore_ardl$forecasts)
+mad_test  <- calc_mad(test$sales, fore_ardl$forecasts)
+msd_test  <- calc_msd(test$sales, fore_ardl$forecasts)
+
+# Evaluasi akurasi data latih (training)
+gof_train  <- GoF(model_ardl_opt)
+mape_train <- gof_train[1, "MAPE"] * 100
+
+# Tabel Ringkasan Akurasi
+eval_table <- data.frame(
+  Model         = paste0("ARDL(", best_p, ",", best_q, ")"),
+  MAPE_Training = paste0(round(mape_train, 4), "%"),
+  MAPE_Testing  = paste0(round(mape_test, 4), "%"),
+  MAD_Testing   = round(mad_test, 4),
+  MSD_Testing   = round(msd_test, 4)
+)
+
+eval_table
+```
+# Visuaslisasi Hasil Prediksi
+
+```{r}
+pred_all <- c(NA, model_ardl_opt$model$fitted.values, fore_ardl$forecasts)
+
+df_plot <- data.frame(
+  Year     = dtsales$year,
+  Aktual   = dtsales$sales,
+  Prediksi = pred_all
+)
+
+ggplot(df_plot, aes(x = Year)) +
+  geom_line(aes(y = Aktual, color = "Aktual"), linewidth = 1) +
+  geom_point(aes(y = Aktual, color = "Aktual"), size = 2) +
+  geom_line(aes(y = Prediksi, color = "Prediksi ARDL (1,1)"), linewidth = 1, linetype = "dashed") +
+  geom_point(aes(y = Prediksi, color = "Prediksi ARDL (1,1)"), size = 2) +
+  geom_vline(xintercept = 2006.5, linetype = "dotted", color = "black", linewidth = 0.8) +
+  annotate("text", x = 1990, y = 20.8, label = "Data Training (80%)", fontface = "bold", size = 4) +
+  annotate("text", x = 2011, y = 20.8, label = "Data Testing (20%)", fontface = "bold", size = 4) +
+  scale_color_manual(values = c("Aktual" = "#2980B9", "Prediksi ARDL (1,1)" = "#27AE60")) +
+  labs(title = "Perbandingan Sales Aktual vs Prediksi Model",
+       subtitle = "Model Autoregressive Distributed Lag - ARDL (1,1)",
+       x = "Tahun", y = "Sales", color = "Keterangan") +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+```
+
+# Diagnostik Sisaan (Uji Asumsi Klasik)
+
+```{r}
+sisaan <- residuals(model_ardl_opt$model)
+
+# Visualisasi Sisaan
+par(mfrow = c(1, 2))
+qqnorm(sisaan, pch = 19, col = "#8E44AD", main = "Normal Q-Q Plot Sisaan")
+qqline(sisaan, col = "red", lwd = 2)
+
+acf(sisaan, main = "ACF Sisaan ARDL (1,1)")
+par(mfrow = c(1, 1))
+
+# Uji Asumsi Klasik Formal
+shapiro.test(sisaan)            # 1. Uji Normalitas
+dwtest(model_ardl_opt$model)    # 2. Uji Non-Autokorelasi (Durbin-Watson)
+bgtest(model_ardl_opt$model)    # 3. Uji Non-Autokorelasi (Breusch-Godfrey)
+bptest(model_ardl_opt$model)    # 4. Uji Homoskedastisitas (Breusch-Pagan)
+```
+
+
+# Pembahasan dan Kesimpulan
+
+*Model Optimum Terpilih:*
+
+Berdasarkan kriteria nilai AIC terendah pada fungsi ardlBoundOrders(), model terbaik yang terpilih adalah ARDL(1,1) dengan nilai AIC sebesar -13.1522. Persamaan dugaan model yang terbentuk adalah:$$\hat{Y}_t = 1.3030 + 0.3084 X_t - 0.2064 X_{t-1} + 0.8395 Y_{t-1}$$
+
+*Diagnostik Sisaan:* 
+1. Uji Durbin-Watson: Nilai $p\text{-value} = 0.4089 > 0.05$, menunjukkan sisaan bebas dari masalah autokorelasi.
+2. Uji Breusch-Pagan: Nilai $p\text{-value} = 0.4578 > 0.05$, menunjukkan ragam sisaan homogen (memenuhi asumsi homoskedastisitas).
+3. Uji Shapiro-Wilk: Nilai $p\text{-value} = 0.8678 > 0.05$, menunjukkan sisaan menyebar normal.
+
+*Akurasi Peramalan (Forecast):*
+
+Model menghasilkan nilai MAPE pada data latih sebesar 0.8226% dan pada data uji sebesar 1.45% (keduanya $< 10\%$). Hal ini menunjukkan model memiliki akurasi peramalan yang sangat baik (highly accurate) dan tidak mengalami overfitting.
+
+*Interpretasi Multiplier:* 
+
+Dampak Jangka Pendek (Impact Multiplier): Koefisien peubah $X_t$ adalah 0.3084. Artinya, kenaikan biaya iklan sebesar 1 satuan pada tahun berjalan akan meningkatkan penjualan secara langsung sebesar 0.3084 satuan pada tahun yang sama.
+
+Dampak Jangka Panjang (Long-run Multiplier): 
+Dihitung dengan rumus:
+$$\text{Long-run Multiplier} = \frac{\hat{\beta}_0 + \hat{\beta}_1}{1 - \hat{\phi}_1} = \frac{0.3084 + (-0.2064)}{1 - 0.8395} = \frac{0.1020}{0.1605} \approx 0.6355$$
+
+Artinya, jika penambahan biaya iklan sebesar 1 satuan dipertahankan terus-menerus setiap tahun, total akumulasi peningkatan penjualan dalam jangka panjang mencapai 0.6355 satuan.
