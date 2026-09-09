@@ -1,0 +1,185 @@
+---
+title: "P3 MPDW - Regresi dengan Peubah Lag Soal 1"
+author: Naurah Aathirah Farid - M0401241037
+output:
+  html_document:
+    theme: yeti
+    toc: true
+    toc_float: true
+  word_document: default
+  pdf_document: default
+---
+
+```{r}
+library(dLagM)
+library(dynlm)
+library(lmtest)
+library(forecast)
+library(ggplot2)
+```
+# Input Data
+
+```{r}
+period <- 1:20
+marketshare <- c(3.63, 4.20, 3.33, 4.54, 2.89, 4.87, 4.90, 5.29, 6.18, 7.20,
+                 7.25, 6.09, 6.80, 8.65, 8.43, 8.29, 7.18, 7.90, 8.45, 8.23)
+price <- c(0.97, 0.95, 0.99, 0.91, 0.98, 0.90, 0.89, 0.86, 0.85, 0.82,
+           0.79, 0.83, 0.81, 0.77, 0.76, 0.80, 0.83, 0.79, 0.76, 0.78)
+
+data <- data.frame(
+  period = period,
+  Yt = marketshare,
+  Xt = price
+)
+head(data)
+```
+
+## Visualisasi Deret Waktu
+
+```{r}
+par(mfrow = c(1, 2))
+plot(data$period, data$Yt, type = "b", pch = 19, col = "#2C3E50", lwd = 2,
+     xlab = "Periode", ylab = "Market Share (%)", main = "Tren Pangsa Pasar (Yt)")
+grid()
+
+plot(data$period, data$Xt, type = "b", pch = 19, col = "#E74C3C", lwd = 2,
+     xlab = "Periode", ylab = "Price", main = "Tren Harga (Xt)")
+grid()
+par(mfrow = c(1, 1))
+```
+
+## Pembagian Data (Train & Test)
+
+```{r}
+train <- data[1:16, ]
+test  <- data[17:20, ]
+
+# Konversi ke bentuk time series
+train.ts <- ts(train)
+test.ts  <- ts(test)
+```
+
+## Pemodelan
+
+```{r}
+calc_mape <- function(actual, pred) { mean(abs((actual - pred) / actual)) * 100 }
+calc_mad  <- function(actual, pred) { mean(abs(actual - pred)) }
+calc_msd  <- function(actual, pred) { mean((actual - pred)^2) }
+```
+
+### A. Model Koyck
+
+```{r}
+model.koyck <- koyckDlm(x = train$Xt, y = train$Yt, intercept = TRUE)
+summary(model.koyck)
+
+# Peramalan data uji
+fore.koyck <- dLagM::forecast(model = model.koyck, x = test$Xt, h = 4)
+
+# Akurasi data uji
+mape.koyck <- calc_mape(test$Yt, fore.koyck$forecasts)
+mad.koyck  <- calc_mad(test$Yt, fore.koyck$forecasts)
+msd.koyck  <- calc_msd(test$Yt, fore.koyck$forecasts)
+```
+
+### B. Model Distributed Lag (Ad-Hoc/DLM)
+
+```{r}
+# 1. Model DLM q = 1
+model.dlm1 <- dlm(x = train$Xt, y = train$Yt, q = 1)
+summary(model.dlm1)
+
+fore.dlm1 <- dLagM::forecast(model = model.dlm1, x = test$Xt, h = 4)
+mape.dlm1 <- calc_mape(test$Yt, fore.dlm1$forecasts)
+mad.dlm1  <- calc_mad(test$Yt, fore.dlm1$forecasts)
+msd.dlm1  <- calc_msd(test$Yt, fore.dlm1$forecasts)
+
+# 2. Model DLM q = 2
+model.dlm2 <- dlm(x = train$Xt, y = train$Yt, q = 2)
+summary(model.dlm2)
+
+fore.dlm2 <- dLagM::forecast(model = model.dlm2, x = test$Xt, h = 4)
+mape.dlm2 <- calc_mape(test$Yt, fore.dlm2$forecasts)
+mad.dlm2  <- calc_mad(test$Yt, fore.dlm2$forecasts)
+msd.dlm2  <- calc_msd(test$Yt, fore.dlm2$forecasts)
+```
+
+### C. Model Autoregressive Distribute Lag (ARDL)
+Menggunakan Spesfikasi Model ARDL (1,1)
+```{r}
+model.ardl <- ardlDlm(formula = Yt ~ Xt, data = data.frame(train), p = 1, q = 1)
+summary(model.ardl)
+
+# Peramalan data uji
+fore.ardl <- dLagM::forecast(model = model.ardl, x = test$Xt, h = 4)
+mape.ardl <- calc_mape(test$Yt, fore.ardl$forecasts)
+mad.ardl  <- calc_mad(test$Yt, fore.ardl$forecasts)
+msd.ardl  <- calc_msd(test$Yt, fore.ardl$forecasts)
+```
+
+## Perbandingan Akurasi Model
+
+```{r}
+akurasi <- data.frame(
+  Model = c("Koyck", "Ad-Hoc (q=1)", "Ad-Hoc (q=2)", "ARDL (1,1)"),
+  MAPE  = c(mape.koyck, mape.dlm1, mape.dlm2, mape.ardl),
+  MAD   = c(mad.koyck,  mad.dlm1,  mad.dlm2,  mad.ardl),
+  MSD   = c(msd.koyck,  msd.dlm1,  msd.dlm2,  msd.ardl)
+)
+
+akurasi[, 2:4] <- round(akurasi[, 2:4], 4)
+akurasi
+```
+
+## Visualisasi Hasil Prediksi Model Terbaik
+
+```{r}
+pred_ardl <- c(NA, model.ardl$model$fitted.values, fore.ardl$forecasts)
+
+df_plot <- data.frame(
+  Period = data$period,
+  Aktual = data$Yt,
+  Prediksi = pred_ardl
+)
+
+ggplot(df_plot, aes(x = Period)) +
+  geom_line(aes(y = Aktual, color = "Aktual"), linewidth = 1) +
+  geom_point(aes(y = Aktual, color = "Aktual"), size = 2) +
+  geom_line(aes(y = Prediksi, color = "Prediksi ARDL (1,1)"), linewidth = 1, linetype = "dashed") +
+  geom_point(aes(y = Prediksi, color = "Prediksi ARDL (1,1)"), size = 2) +
+  geom_vline(xintercept = 16.5, linetype = "dotted", color = "black", linewidth = 0.8) +
+  annotate("text", x = 8, y = 8.5, label = "Data Training", fontface = "bold", size = 4) +
+  annotate("text", x = 18.5, y = 8.5, label = "Data Testing", fontface = "bold", size = 4) +
+  scale_color_manual(values = c("Aktual" = "#2980B9", "Prediksi ARDL (1,1)" = "#27AE60")) +
+  labs(title = "Perbandingan Nilai Aktual vs Prediksi Model Terbaik",
+       subtitle = "Model Autoregressive Distributed Lag - ARDL (1,1)",
+       x = "Periode", y = "Market Share (%)", color = "Keterangan") +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+```
+
+## Diagnostik Sisaan Model Terbaik
+
+```{r}
+# Ambil sisaan dari model ARDL (1,1)
+sisaan_ardl <- residuals(model.ardl$model)
+
+# Visualisasi Sisaan: Q-Q Plot dan ACF Plot
+par(mfrow = c(1, 2))
+qqnorm(sisaan_ardl, pch = 19, col = "#8E44AD", main = "Normal Q-Q Plot Sisaan ARDL (1,1)")
+qqline(sisaan_ardl, col = "red", lwd = 2)
+
+acf(sisaan_ardl, main = "ACF Sisaan ARDL (1,1)")
+par(mfrow = c(1, 1))
+
+# Uji Asumsi Formal
+shapiro.test(sisaan_ardl)      # 1. Normalitas
+bgtest(model.ardl$model)       # 2. Non-Autokorelasi
+bptest(model.ardl$model)       # 3. Homoskedastisitas
+```
+
+## Kesimpulan
+
+1. Berdasarkan perbandingan kriteria kesalahan peramalan pada data uji (*testing*), **Model ARDL (1,1)** terpilih sebagai model terbaik karena menghasilkan nilai **MAPE terendah (0.7625%)**, MAD terendah (0.0621), dan MSD terendah (0.0066).
+2. Model ARDL (1,1) juga telah memenuhi seluruh asumsi klasik sisaan regresi OLS:
+   * **Normalitas:** Nilai $p\text{-value} > 0.05$ pada uji Shapiro-Wilk menunjukkan sisaan menyebar normal.
